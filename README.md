@@ -17,6 +17,18 @@ DevNavigator is an AI-powered engineering platform designed to help developers i
 - LlamaIndex (GraphRAG & Document Embedding)
 - Google Gemini API (LLM)
 
+## Why DevNavigator? (Our Advantages)
+
+Existing tools often struggle with understanding large codebases because they rely on simple text search. Here is how DevNavigator solves these limitations:
+
+| Existing Limitation | DevNavigator's Solution |
+|---------------------|--------------------------|
+| **Only semantic search** | Combines semantic retrieval with **GraphRAG** to understand deep structural relationships. |
+| **Single AI prompt** | Uses specialized **Architect, Reviewer, and Security agents** through multi-agent orchestration. |
+| **Poor dependency visualization** | Builds an explicit dependency graph with **NetworkX**. |
+| **Difficult onboarding** | Allows developers to ask natural-language questions about architecture and code flow, radically speeding up onboarding. |
+| **Cloud privacy concerns** | Runs the analysis pipeline **locally** (with local indexing and graph construction) ensuring source code doesn't leak. |
+
 ## Features
 
 - **Multi-Tenant Architecture:** Every ingested repository gets its own perfectly isolated vector collection.
