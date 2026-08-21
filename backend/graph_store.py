@@ -2,27 +2,41 @@ import networkx as nx
 import pickle
 import os
 
-GRAPH_FILE = "codebase_graph.gpickle"
+GRAPH_DIR = "graph_store"
 
-def get_or_create_graph():
+if not os.path.exists(GRAPH_DIR):
+    os.makedirs(GRAPH_DIR)
+
+def get_graph_path(repo_id: str):
+    return os.path.join(GRAPH_DIR, f"{repo_id}.gpickle")
+
+def get_or_create_graph(repo_id: str):
     """Load the existing graph from disk or create a new one."""
-    if os.path.exists(GRAPH_FILE):
+    graph_file = get_graph_path(repo_id)
+    if os.path.exists(graph_file):
         try:
-            return pickle.load(open(GRAPH_FILE, 'rb'))
+            return pickle.load(open(graph_file, 'rb'))
         except Exception:
             pass
     return nx.DiGraph()
 
-def save_graph(G):
+def save_graph(G, repo_id: str):
     """Save the graph to disk."""
-    with open(GRAPH_FILE, 'wb') as f:
+    graph_file = get_graph_path(repo_id)
+    with open(graph_file, 'wb') as f:
         pickle.dump(G, f)
 
-def build_knowledge_graph(documents_data: list):
+def delete_graph(repo_id: str):
+    """Delete the graph for a repository."""
+    graph_file = get_graph_path(repo_id)
+    if os.path.exists(graph_file):
+        os.remove(graph_file)
+
+def build_knowledge_graph(documents_data: list, repo_id: str):
     """
     Build a NetworkX Directed Graph representing dependencies between files and classes.
     """
-    G = get_or_create_graph()
+    G = get_or_create_graph(repo_id)
 
     for data in documents_data:
         file_node = data['file']
@@ -51,5 +65,5 @@ def build_knowledge_graph(documents_data: list):
             G.add_node(imp, type="module")
             G.add_edge(file_node, imp, relation="IMPORTS")
 
-    save_graph(G)
+    save_graph(G, repo_id)
     return G

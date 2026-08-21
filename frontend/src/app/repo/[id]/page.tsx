@@ -5,7 +5,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useAuth, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
+import dynamic from 'next/dynamic';
 
+const ForceGraphComponent = dynamic(() => import('./ForceGraph'), { ssr: false });
 export default function RepoChat({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
   const { getToken, isLoaded } = useAuth();
@@ -14,6 +16,7 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchingHistory, setFetchingHistory] = useState(true);
+  const [activeTab, setActiveTab] = useState<"chat" | "map">("chat");
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -132,10 +135,28 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
           </div>
         </div>
 
-        {/* Chat Interface */}
+        {/* Main Content Area */}
         <div className="lg:col-span-3 flex flex-col bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden h-[calc(100vh-8rem)]">
           
-          <div className="flex-1 p-6 overflow-y-auto space-y-6">
+          {/* Tabs */}
+          <div className="flex border-b border-slate-200 bg-slate-50/50">
+            <button 
+              onClick={() => setActiveTab("chat")}
+              className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              Ask Architect
+            </button>
+            <button 
+              onClick={() => setActiveTab("map")}
+              className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "map" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              Architecture Map
+            </button>
+          </div>
+          
+          {activeTab === "chat" ? (
+            <>
+              <div className="flex-1 p-6 overflow-y-auto space-y-6">
             {fetchingHistory ? (
               <div className="flex h-full items-center justify-center text-slate-400">
                  Loading chat history...
@@ -197,6 +218,12 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
               </button>
             </div>
           </div>
+          </>
+          ) : (
+            <div className="flex-1 overflow-hidden relative">
+              <ForceGraphComponent repoId={resolvedParams.id} />
+            </div>
+          )}
         </div>
       </div>
     </div>

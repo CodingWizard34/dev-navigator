@@ -41,12 +41,43 @@ def ingest_repository(repo: RepositoryUrl, db: Session = Depends(get_db), curren
     if not os.environ.get("GOOGLE_API_KEY"):
         raise HTTPException(status_code=400, detail="GOOGLE_API_KEY environment variable is not set. Required for embeddings.")
     
+    import tempfile
+    import subprocess
+    import shutil
+    from urllib.parse import urlparse
+
     try:
+        is_url = repo.url.startswith("http://") or repo.url.startswith("https://")
+        
+        target_path = repo.url
+        temp_dir = None
+        
+        if is_url:
+            # Parse repo name from URL (e.g., https://github.com/facebook/react -> react)
+            parsed_url = urlparse(repo.url)
+            repo_name = os.path.basename(parsed_url.path).replace(".git", "")
+            
+            # Create a temporary directory and clone the repo
+            temp_dir = tempfile.mkdtemp()
+            try:
+                subprocess.run(["git", "clone", "--depth", "1", repo.url, temp_dir], check=True, capture_output=True)
+            except subprocess.CalledProcessError as e:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise HTTPException(status_code=400, detail=f"Failed to clone repository. Is it public? Error: {e.stderr.decode('utf-8')}")
+            
+            target_path = temp_dir
+        else:
+            repo_name = os.path.basename(os.path.normpath(repo.url))
+
         # Step 1: Parse the repository
-        parsed_files = ingest_local_directory(repo.url)
+        parsed_files = ingest_local_directory(target_path)
+        
+        if not parsed_files:
+            if temp_dir:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="No supported files found in repository.")
         
         # Step 1.5: Register Repo in Database
-        repo_name = os.path.basename(os.path.normpath(repo.url))
         new_repo = Repository(
             owner_id=current_user.id,
             name=repo_name,
@@ -61,14 +92,23 @@ def ingest_repository(repo: RepositoryUrl, db: Session = Depends(get_db), curren
         embed_documents(parsed_files, repo_id=new_repo.id)
         
         # Step 3: Build the knowledge graph (NetworkX) scoped by repo_id
-        graph = build_knowledge_graph(parsed_files) # Note: we'll skip scoping graph for MVP to save time
+        graph = build_knowledge_graph(parsed_files, repo_id=str(new_repo.id))
         
+        # Clean up temporary directory if we cloned from GitHub
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
         return {
             "status": "success", 
             "repo_id": new_repo.id,
-            "message": f"Successfully parsed {len(parsed_files)} Python files, embedded into ChromaDB collection '{new_repo.id}'.",
+            "message": f"Successfully parsed {len(parsed_files)} Python/JS files, embedded into ChromaDB collection '{new_repo.id}'.",
         }
+    except HTTPException:
+        raise
     except Exception as e:
+        if 'temp_dir' in locals() and temp_dir:
+            import shutil
+            shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=str(e))
 
 class ChatQuery(BaseModel):
@@ -122,6 +162,7 @@ def get_chat_history(repo_id: str, db: Session = Depends(get_db), current_user: 
 @app.delete("/api/v1/repos/{repo_id}")
 def delete_repo(repo_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from vector_store import delete_vector_index
+    from graph_store import delete_graph
     
     repo = db.query(Repository).filter(Repository.id == repo_id, Repository.owner_id == current_user.id).first()
     if not repo:
@@ -133,6 +174,34 @@ def delete_repo(repo_id: str, db: Session = Depends(get_db), current_user: User 
     
     # Delete ChromaDB collection
     delete_vector_index(repo_id)
+    
+    # Delete Graph
+    delete_graph(repo_id)
         
     return {"status": "success", "message": "Repository deleted successfully."}
 
+@app.get("/api/v1/repos/{repo_id}/graph")
+def get_repo_graph(repo_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    from graph_store import get_or_create_graph
+    
+    # Verify user owns this repo
+    repo = db.query(Repository).filter(Repository.id == repo_id, Repository.owner_id == current_user.id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found or access denied.")
+        
+    G = get_or_create_graph(repo_id)
+    
+    # Convert to JSON payload compatible with react-force-graph
+    from networkx.readwrite import json_graph
+    data = json_graph.node_link_data(G)
+    
+    # ensure 'id' is present for force graph
+    nodes = []
+    for n in data.get("nodes", []):
+        if "id" not in n:
+            n["id"] = n.get("id", str(n))
+        nodes.append(n)
+        
+    links = data.get("links", [])
+    
+    return {"status": "success", "graph": {"nodes": nodes, "links": links}}

@@ -24,7 +24,7 @@ def execute_graphrag_query(query: str, repo_id: str):
     vector_context = "\n".join([n.text for n in nodes])
     
     # 2. Graph Traversal (Find neighbors of retrieved files/classes)
-    G = get_or_create_graph()
+    G = get_or_create_graph(repo_id)
     graph_context = "Graph Dependencies:\n"
     for node in nodes:
         file_name = node.metadata.get("file")
