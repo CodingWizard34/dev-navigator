@@ -8,6 +8,9 @@ from graph_store import build_knowledge_graph
 from models import init_db, get_db, Repository, User, Message
 from auth import get_current_user
 import os
+import stripe
+
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_mock")
 
 app = FastAPI(title="AI Engineering Platform API")
 
@@ -45,6 +48,12 @@ def ingest_repository(repo: RepositoryUrl, db: Session = Depends(get_db), curren
     import subprocess
     import shutil
     from urllib.parse import urlparse
+
+    # Free Tier Limit Check
+    if current_user.is_pro == 0:
+        repo_count = db.query(Repository).filter(Repository.owner_id == current_user.id).count()
+        if repo_count >= 1:
+            raise HTTPException(status_code=403, detail="Free tier is limited to 1 repository. Upgrade to Pro for unlimited ingestion!")
 
     try:
         is_url = repo.url.startswith("http://") or repo.url.startswith("https://")
@@ -127,21 +136,37 @@ def chat(chat_query: ChatQuery, db: Session = Depends(get_db), current_user: Use
     if not os.environ.get("GOOGLE_API_KEY"):
         raise HTTPException(status_code=400, detail="GOOGLE_API_KEY environment variable is not set. Required for Gemini.")
         
+    # Free Tier Limit Check
+    if current_user.is_pro == 0:
+        if current_user.query_count >= 5:
+            raise HTTPException(status_code=403, detail="You have reached your free tier limit of 5 questions. Upgrade to Pro for unlimited chats!")
+        
+        current_user.query_count += 1
+        db.add(current_user)
+        # Commit will happen down below
+        
     try:
-        # 1. Generate AI Response
-        response = execute_graphrag_query(chat_query.query, repo_id=chat_query.repo_id)
+        # 1. Generate AI Response Stream
+        response_generator = execute_graphrag_query(chat_query.query, repo_id=chat_query.repo_id)
         
-        # 2. Save User Message
-        user_msg = Message(repo_id=chat_query.repo_id, role="user", content=chat_query.query)
-        db.add(user_msg)
+        from fastapi.responses import StreamingResponse
         
-        # 3. Save AI Message
-        ai_msg = Message(repo_id=chat_query.repo_id, role="ai", content=response)
-        db.add(ai_msg)
-        
-        db.commit()
-        
-        return {"status": "success", "response": response}
+        def stream_with_db_save():
+            full_response = ""
+            for chunk in response_generator:
+                full_response += chunk
+                yield chunk
+            
+            # Now that stream is done, save it!
+            user_msg = Message(repo_id=chat_query.repo_id, role="user", content=chat_query.query)
+            db.add(user_msg)
+            
+            ai_msg = Message(repo_id=chat_query.repo_id, role="ai", content=full_response)
+            db.add(ai_msg)
+            
+            db.commit()
+
+        return StreamingResponse(stream_with_db_save(), media_type="text/event-stream")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -180,6 +205,55 @@ def delete_repo(repo_id: str, db: Session = Depends(get_db), current_user: User 
         
     return {"status": "success", "message": "Repository deleted successfully."}
 
+@app.post("/api/v1/create-checkout-session")
+def create_checkout_session(current_user: User = Depends(get_current_user)):
+    try:
+        checkout_session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[
+                {
+                    'price_data': {
+                        'currency': 'usd',
+                        'unit_amount': 1500, # $15.00
+                        'product_data': {
+                            'name': 'DevNavigator Pro',
+                            'description': 'Unlimited Repositories & AI Architecture Queries'
+                        },
+                    },
+                    'quantity': 1,
+                },
+            ],
+            mode='payment',
+            success_url="http://localhost:3000/dashboard?success=true",
+            cancel_url="http://localhost:3000/dashboard?canceled=true",
+            client_reference_id=current_user.id
+        )
+        return {"url": checkout_session.url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from fastapi import Request
+@app.post("/api/v1/webhook/stripe")
+async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    payload = await request.body()
+    try:
+        import json
+        event = json.loads(payload)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Webhook error: {e}")
+
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        user_id = session.get("client_reference_id")
+        if user_id:
+            user = db.query(User).filter(User.id == user_id).first()
+            if user:
+                user.is_pro = 1
+                db.add(user)
+                db.commit()
+
+    return {"status": "success"}
+
 @app.get("/api/v1/repos/{repo_id}/graph")
 def get_repo_graph(repo_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from graph_store import get_or_create_graph
@@ -199,9 +273,9 @@ def get_repo_graph(repo_id: str, db: Session = Depends(get_db), current_user: Us
     nodes = []
     for n in data.get("nodes", []):
         if "id" not in n:
-            n["id"] = n.get("id", str(n))
+            n["id"] = str(n.get("name", n)) # fallback if id is truly missing
         nodes.append(n)
         
-    links = data.get("links", [])
+    links = data.get("links", data.get("edges", []))
     
     return {"status": "success", "graph": {"nodes": nodes, "links": links}}

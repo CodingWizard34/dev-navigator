@@ -10,6 +10,8 @@ class User(Base):
     
     id = Column(String, primary_key=True, index=True) # Clerk User ID (e.g. user_2...)
     email = Column(String, unique=True, index=True)
+    is_pro = Column(Integer, default=0) # 0 for false, 1 for true
+    query_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     repositories = relationship("Repository", back_populates="owner")

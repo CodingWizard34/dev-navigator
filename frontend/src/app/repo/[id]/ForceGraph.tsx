@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { useAuth } from "@clerk/nextjs";
 
@@ -8,6 +8,14 @@ export default function ForceGraphComponent({ repoId }: { repoId: string }) {
   const { getToken } = useAuth();
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
+  const fgRef = useRef<any>();
+
+  useEffect(() => {
+    if (fgRef.current) {
+      // Increase repulsion so the radial layout has plenty of breathing room
+      fgRef.current.d3Force('charge').strength(-400);
+    }
+  }, [graphData]);
   
   // Custom colors for nodes
   const NODE_COLORS = {
@@ -56,10 +64,13 @@ export default function ForceGraphComponent({ repoId }: { repoId: string }) {
       </div>
 
       <ForceGraph2D
+        ref={fgRef}
         graphData={graphData}
         nodeLabel="id"
         nodeRelSize={6}
-        linkColor={() => "rgba(255,255,255,0.15)"}
+        dagMode="radialout"
+        dagLevelDistance={120}
+        linkColor={() => "rgba(255,255,255,0.25)"}
         linkWidth={1.5}
         linkDirectionalParticles={2}
         linkDirectionalParticleWidth={2}

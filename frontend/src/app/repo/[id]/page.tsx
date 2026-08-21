@@ -68,16 +68,37 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
         }),
       });
       
-      const data = await res.json();
-      if (res.ok) {
-        setMessages([...newMessages, { role: "ai", content: data.response }]);
-      } else {
-        setMessages([...newMessages, { role: "ai", content: "Error: " + (data.detail || "Unknown error") }]);
+      if (!res.ok) {
+        const errData = await res.json();
+        setMessages([...newMessages, { role: "ai", content: "Error: " + (errData.detail || "Unknown error") }]);
+        setLoading(false);
+        return;
+      }
+      
+      const reader = res.body?.getReader();
+      const decoder = new TextDecoder();
+      let streamedResponse = "";
+      
+      setMessages([...newMessages, { role: "ai", content: "" }]);
+      setLoading(false);
+      
+      while (reader) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        const chunk = decoder.decode(value, { stream: true });
+        streamedResponse += chunk;
+        
+        setMessages(prev => {
+          const updated = [...prev];
+          updated[updated.length - 1].content = streamedResponse;
+          return updated;
+        });
       }
     } catch (e) {
       setMessages([...newMessages, { role: "ai", content: "Failed to connect to backend." }]);
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   if (!isLoaded) return <div className="min-h-screen bg-slate-50 flex items-center justify-center">Loading...</div>;

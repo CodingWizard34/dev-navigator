@@ -173,7 +173,27 @@ export default function Dashboard() {
               )}
             </button>
           </form>
-          {error && <p className="text-red-500 text-sm mt-3">{error}</p>}
+          {error && (
+            <div className="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between">
+              <p className="text-amber-800 text-sm font-medium">{error}</p>
+              {error.includes("Upgrade to Pro") && (
+                <button
+                  onClick={async () => {
+                    const token = await getToken();
+                    const res = await fetch("http://127.0.0.1:8000/api/v1/create-checkout-session", {
+                      method: "POST",
+                      headers: { Authorization: `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    if (data.url) window.location.href = data.url;
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 text-white font-bold text-sm rounded-lg shadow hover:shadow-md transition-all"
+                >
+                  Unlock Pro for $15/mo
+                </button>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Repositories Grid */}

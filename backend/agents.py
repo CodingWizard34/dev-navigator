@@ -36,15 +36,19 @@ Do not use conversational filler, just output the structured report directly.
     
     for attempt in range(max_retries):
         try:
-            response = client.models.generate_content(
+            response = client.models.generate_content_stream(
                 model='gemini-flash-latest',
                 contents=prompt
             )
-            return response.text
+            for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+            return # We successfully finished streaming
         except Exception as e:
             error_msg = str(e)
             if "503" in error_msg or "429" in error_msg:
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt) # Sleep 1s, 2s, 4s...
                     continue
-            return f"Error generating analysis after {attempt + 1} attempts: {error_msg}"
+            yield f"Error generating analysis after {attempt + 1} attempts: {error_msg}"
+            return
