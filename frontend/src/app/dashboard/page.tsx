@@ -68,16 +68,22 @@ export default function Dashboard() {
         body: JSON.stringify({ url: ingestUrl })
       });
       
-      const data = await res.json();
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        // Non-JSON response
+      }
       
       if (res.ok) {
         setIngestUrl("");
         fetchRepos(); // refresh list
       } else {
-        setError(data.detail || "Failed to ingest repository.");
+        setError(data.detail || `Server error (${res.status}): ${res.statusText || "Failed to ingest"}`);
       }
-    } catch (e) {
-      setError("Network error connecting to backend.");
+    } catch (e: any) {
+      console.error("Ingest error:", e);
+      setError(e?.message ? `Connection error: ${e.message}` : "Network error connecting to backend.");
     } finally {
       setIngesting(false);
     }
