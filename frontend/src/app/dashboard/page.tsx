@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { API_BASE_URL } from "@/lib/api";
 
 type Repo = {
   id: string;
@@ -27,7 +28,7 @@ export default function Dashboard() {
   const fetchRepos = async () => {
     try {
       const token = await getToken();
-      const res = await fetch("http://127.0.0.1:8000/api/v1/repos", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/repos`, {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -58,7 +59,7 @@ export default function Dashboard() {
     
     try {
       const token = await getToken();
-      const res = await fetch("http://127.0.0.1:8000/api/v1/ingest", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/ingest`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -90,7 +91,7 @@ export default function Dashboard() {
     
     try {
       const token = await getToken();
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/repos/${repoId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/repos/${repoId}`, {
         method: "DELETE",
         headers: {
           Authorization: `Bearer ${token}`
@@ -125,7 +126,7 @@ export default function Dashboard() {
             <span className="font-bold text-xl tracking-tight">DevNavigator</span>
           </div>
           <div className="flex items-center space-x-4">
-            <UserButton afterSignOutUrl="/" />
+            <UserButton />
           </div>
         </div>
       </nav>
@@ -180,7 +181,7 @@ export default function Dashboard() {
                 <button
                   onClick={async () => {
                     const token = await getToken();
-                    const res = await fetch("http://127.0.0.1:8000/api/v1/create-checkout-session", {
+                    const res = await fetch(`${API_BASE_URL}/api/v1/create-checkout-session`, {
                       method: "POST",
                       headers: { Authorization: `Bearer ${token}` }
                     });

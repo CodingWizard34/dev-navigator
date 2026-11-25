@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from ingestion import ingest_local_directory
 from vector_store import embed_documents
 from graph_store import build_knowledge_graph
-from models import init_db, get_db, Repository, User, Message
+from models import init_db, get_db, Repository, User, Message, RepoMember
 from auth import get_current_user
 import os
 import stripe
@@ -26,6 +26,13 @@ app.add_middleware(
 class RepositoryUrl(BaseModel):
     url: str
 
+class GitHubTokenPayload(BaseModel):
+    token: str
+
+class InvitePayload(BaseModel):
+    email: str
+    role: str = "viewer"
+
 @app.on_event("startup")
 def on_startup():
     init_db()
@@ -34,10 +41,30 @@ def on_startup():
 def read_root():
     return {"message": "Welcome to AI Engineering Platform API"}
 
+@app.post("/api/v1/user/github-token")
+def save_github_token(payload: GitHubTokenPayload, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    current_user.github_token = payload.token
+    db.add(current_user)
+    db.commit()
+    return {"status": "success", "message": "GitHub token saved."}
+
+@app.get("/api/v1/user/me")
+def get_me(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "is_pro": current_user.is_pro,
+        "query_count": current_user.query_count,
+        "has_github_token": bool(current_user.github_token)
+    }
+
 @app.get("/api/v1/repos")
 def get_repos(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    repos = db.query(Repository).filter(Repository.owner_id == current_user.id).all()
-    return {"status": "success", "repos": [{"id": r.id, "name": r.name, "path": r.path, "tech_debt_score": r.tech_debt_score} for r in repos]}
+    owned = db.query(Repository).filter(Repository.owner_id == current_user.id).all()
+    member_repo_ids = [m.repo_id for m in db.query(RepoMember).filter(RepoMember.user_id == current_user.id).all()]
+    shared = db.query(Repository).filter(Repository.id.in_(member_repo_ids)).all() if member_repo_ids else []
+    all_repos = owned + [r for r in shared if r.owner_id != current_user.id]
+    return {"status": "success", "repos": [{"id": r.id, "name": r.name, "path": r.path, "tech_debt_score": r.tech_debt_score, "is_owner": r.owner_id == current_user.id} for r in all_repos]}
 
 @app.post("/api/v1/ingest")
 def ingest_repository(repo: RepositoryUrl, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -66,13 +93,19 @@ def ingest_repository(repo: RepositoryUrl, db: Session = Depends(get_db), curren
             parsed_url = urlparse(repo.url)
             repo_name = os.path.basename(parsed_url.path).replace(".git", "")
             
-            # Create a temporary directory and clone the repo
             temp_dir = tempfile.mkdtemp()
+            
+            # Inject the token for private repos if the user has one saved
+            clone_url = repo.url
+            if current_user.github_token and "github.com" in repo.url:
+                clean_url = repo.url.replace("https://", "")
+                clone_url = f"https://{current_user.github_token}@{clean_url}"
+            
             try:
-                subprocess.run(["git", "clone", "--depth", "1", repo.url, temp_dir], check=True, capture_output=True)
+                subprocess.run(["git", "clone", "--depth", "1", clone_url, temp_dir], check=True, capture_output=True)
             except subprocess.CalledProcessError as e:
                 shutil.rmtree(temp_dir, ignore_errors=True)
-                raise HTTPException(status_code=400, detail=f"Failed to clone repository. Is it public? Error: {e.stderr.decode('utf-8')}")
+                raise HTTPException(status_code=400, detail=f"Failed to clone repository. For private repos, save your GitHub token in Settings. Error: {e.stderr.decode('utf-8')}")
             
             target_path = temp_dir
         else:
@@ -128,10 +161,13 @@ class ChatQuery(BaseModel):
 def chat(chat_query: ChatQuery, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     from graphrag import execute_graphrag_query
     
-    # Verify user owns this repo
-    repo = db.query(Repository).filter(Repository.id == chat_query.repo_id, Repository.owner_id == current_user.id).first()
+    # Verify user owns OR is a member of this repo
+    repo = db.query(Repository).filter(Repository.id == chat_query.repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found or access denied.")
+    is_member = db.query(RepoMember).filter(RepoMember.repo_id == chat_query.repo_id, RepoMember.user_id == current_user.id).first()
+    if repo.owner_id != current_user.id and not is_member:
+        raise HTTPException(status_code=403, detail="Repository not found or access denied.")
     
     if not os.environ.get("GOOGLE_API_KEY"):
         raise HTTPException(status_code=400, detail="GOOGLE_API_KEY environment variable is not set. Required for Gemini.")
@@ -172,10 +208,13 @@ def chat(chat_query: ChatQuery, db: Session = Depends(get_db), current_user: Use
 
 @app.get("/api/v1/chat/{repo_id}")
 def get_chat_history(repo_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Verify user owns this repo
-    repo = db.query(Repository).filter(Repository.id == repo_id, Repository.owner_id == current_user.id).first()
+    # Verify user owns OR is a member of this repo
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="Repository not found or access denied.")
+    is_member = db.query(RepoMember).filter(RepoMember.repo_id == repo_id, RepoMember.user_id == current_user.id).first()
+    if repo.owner_id != current_user.id and not is_member:
+        raise HTTPException(status_code=403, detail="Repository not found or access denied.")
         
     messages = db.query(Message).filter(Message.repo_id == repo_id).order_by(Message.created_at.asc()).all()
     
@@ -204,6 +243,42 @@ def delete_repo(repo_id: str, db: Session = Depends(get_db), current_user: User 
     delete_graph(repo_id)
         
     return {"status": "success", "message": "Repository deleted successfully."}
+
+@app.post("/api/v1/repos/{repo_id}/invite")
+def invite_member(repo_id: str, payload: InvitePayload, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # Only the owner can invite
+    repo = db.query(Repository).filter(Repository.id == repo_id, Repository.owner_id == current_user.id).first()
+    if not repo:
+        raise HTTPException(status_code=403, detail="Only the repository owner can invite members.")
+    
+    # Find the user being invited by email
+    invite_user = db.query(User).filter(User.email == payload.email).first()
+    if not invite_user:
+        raise HTTPException(status_code=404, detail="No user with that email exists. They must sign up first.")
+    
+    # Check if already a member
+    existing = db.query(RepoMember).filter(RepoMember.repo_id == repo_id, RepoMember.user_id == invite_user.id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="This user is already a member of the repository.")
+    
+    member = RepoMember(repo_id=repo_id, user_id=invite_user.id, role=payload.role, invited_by=current_user.id)
+    db.add(member)
+    db.commit()
+    return {"status": "success", "message": f"{payload.email} added as {payload.role}."}
+
+@app.get("/api/v1/repos/{repo_id}/members")
+def get_repo_members(repo_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    repo = db.query(Repository).filter(Repository.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="Repository not found.")
+    is_member = db.query(RepoMember).filter(RepoMember.repo_id == repo_id, RepoMember.user_id == current_user.id).first()
+    if repo.owner_id != current_user.id and not is_member:
+        raise HTTPException(status_code=403, detail="Access denied.")
+    
+    members = db.query(RepoMember).filter(RepoMember.repo_id == repo_id).all()
+    result = [{"user_id": m.user_id, "role": m.role, "email": m.user.email if m.user else "Unknown"} for m in members]
+    result.insert(0, {"user_id": repo.owner_id, "role": "owner", "email": repo.owner.email if repo.owner else "Unknown"})
+    return {"status": "success", "members": result}
 
 @app.post("/api/v1/create-checkout-session")
 def create_checkout_session(current_user: User = Depends(get_current_user)):

@@ -12,9 +12,11 @@ class User(Base):
     email = Column(String, unique=True, index=True)
     is_pro = Column(Integer, default=0) # 0 for false, 1 for true
     query_count = Column(Integer, default=0)
+    github_token = Column(String, nullable=True) # Personal Access Token for private repos
     created_at = Column(DateTime, default=datetime.utcnow)
     
     repositories = relationship("Repository", back_populates="owner")
+    repo_memberships = relationship("RepoMember", back_populates="user")
 
 class Repository(Base):
     __tablename__ = "repositories"
@@ -29,6 +31,20 @@ class Repository(Base):
     
     owner = relationship("User", back_populates="repositories")
     messages = relationship("Message", back_populates="repository", cascade="all, delete-orphan")
+    members = relationship("RepoMember", back_populates="repository", cascade="all, delete-orphan")
+
+class RepoMember(Base):
+    __tablename__ = "repo_members"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    repo_id = Column(String, ForeignKey("repositories.id"))
+    user_id = Column(String, ForeignKey("users.id"))
+    role = Column(String, default="viewer") # 'viewer' or 'editor'
+    invited_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    repository = relationship("Repository", back_populates="members")
+    user = relationship("User", back_populates="repo_memberships")
 
 class Message(Base):
     __tablename__ = "messages"

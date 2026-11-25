@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import { useAuth, UserButton } from "@clerk/nextjs";
 import Link from "next/link";
 import dynamic from 'next/dynamic';
+import { API_BASE_URL } from "@/lib/api";
 
 const ForceGraphComponent = dynamic(() => import('./ForceGraph'), { ssr: false });
 export default function RepoChat({ params }: { params: Promise<{ id: string }> }) {
@@ -16,7 +17,97 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
   const [messages, setMessages] = useState<{ role: string; content: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetchingHistory, setFetchingHistory] = useState(true);
-  const [activeTab, setActiveTab] = useState<"chat" | "map">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "map" | "team">("chat");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("viewer");
+  const [inviting, setInviting] = useState(false);
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [members, setMembers] = useState<{ user_id: string; role: string; email: string }[]>([]);
+
+  const handleExportPDF = async () => {
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    const maxWidth = pageWidth - margin * 2;
+    let y = 20;
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("DevNavigator - Chat History", margin, y);
+    y += 10;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(120);
+    doc.text(`Exported on ${new Date().toLocaleString()}`, margin, y);
+    y += 10;
+    doc.setDrawColor(200);
+    doc.line(margin, y, pageWidth - margin, y);
+    y += 8;
+
+    for (const msg of messages) {
+      if (y > 270) { doc.addPage(); y = 20; }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(msg.role === "user" ? 79 : 16);
+      doc.text(msg.role === "user" ? "You" : "AI Architect", margin, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(40);
+      doc.setFontSize(9);
+      const lines = doc.splitTextToSize(msg.content, maxWidth);
+      for (const line of lines) {
+        if (y > 275) { doc.addPage(); y = 20; }
+        doc.text(line, margin, y);
+        y += 5;
+      }
+      y += 4;
+    }
+
+    doc.save("devnavigator-chat.pdf");
+  };
+
+  const fetchMembers = async () => {
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/repos/${resolvedParams.id}/members`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMembers(data.members);
+      }
+    } catch (e) {
+      console.error("Failed to load members", e);
+    }
+  };
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteEmail.trim()) return;
+    setInviting(true);
+    setInviteMessage("");
+    try {
+      const token = await getToken();
+      const res = await fetch(`${API_BASE_URL}/api/v1/repos/${resolvedParams.id}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setInviteEmail("");
+        setInviteMessage(data.message);
+        fetchMembers();
+      } else {
+        setInviteMessage(data.detail || "Failed to invite member.");
+      }
+    } catch (e) {
+      setInviteMessage("Network error.");
+    } finally {
+      setInviting(false);
+    }
+  };
 
   useEffect(() => {
     if (!isLoaded) return;
@@ -24,7 +115,7 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
     const fetchHistory = async () => {
       try {
         const token = await getToken();
-        const res = await fetch(`http://127.0.0.1:8000/api/v1/chat/${resolvedParams.id}`, {
+        const res = await fetch(`${API_BASE_URL}/api/v1/chat/${resolvedParams.id}`, {
           headers: {
             Authorization: `Bearer ${token}`
           }
@@ -56,7 +147,7 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
 
     try {
       const token = await getToken();
-      const res = await fetch("http://127.0.0.1:8000/api/v1/chat", {
+      const res = await fetch(`${API_BASE_URL}/api/v1/chat`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -119,7 +210,7 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
             <div className="h-6 w-px bg-slate-200"></div>
             <span className="font-bold text-slate-700">Repository Intelligence</span>
           </div>
-          <UserButton afterSignOutUrl="/" />
+          <UserButton />
         </div>
       </nav>
 
@@ -161,88 +252,141 @@ export default function RepoChat({ params }: { params: Promise<{ id: string }> }
           
           {/* Tabs */}
           <div className="flex border-b border-slate-200 bg-slate-50/50">
-            <button 
+            <button
               onClick={() => setActiveTab("chat")}
               className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "chat" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-500 hover:text-slate-700"}`}
             >
               Ask Architect
             </button>
-            <button 
+            <button
               onClick={() => setActiveTab("map")}
               className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "map" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-500 hover:text-slate-700"}`}
             >
               Architecture Map
             </button>
+            <button
+              onClick={() => { setActiveTab("team"); fetchMembers(); }}
+              className={`flex-1 py-3 text-sm font-medium transition-colors ${activeTab === "team" ? "text-indigo-600 border-b-2 border-indigo-600" : "text-slate-500 hover:text-slate-700"}`}
+            >
+              Team
+            </button>
           </div>
-          
+
           {activeTab === "chat" ? (
             <>
               <div className="flex-1 p-6 overflow-y-auto space-y-6">
-            {fetchingHistory ? (
-              <div className="flex h-full items-center justify-center text-slate-400">
-                 Loading chat history...
-              </div>
-            ) : messages.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-slate-400">
-                <div className="text-center space-y-3 max-w-md">
-                  <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                    <svg className="w-8 h-8 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                    </svg>
+                {fetchingHistory ? (
+                  <div className="flex h-full items-center justify-center text-slate-400">
+                    Loading chat history...
                   </div>
-                  <p className="text-lg font-medium text-slate-700">Ask your AI Architect</p>
-                  <p className="text-sm">Query your codebase structure, dependencies, or ask for refactoring advice.</p>
+                ) : messages.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-slate-400">
+                    <div className="text-center space-y-3 max-w-md">
+                      <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                        <svg className="w-8 h-8 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
+                      </div>
+                      <p className="text-lg font-medium text-slate-700">Ask your AI Architect</p>
+                      <p className="text-sm">Query your codebase structure, dependencies, or ask for refactoring advice.</p>
+                    </div>
+                  </div>
+                ) : (
+                  messages.map((msg, i) => (
+                    <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {msg.role === "user" ? (
+                        <div className="max-w-[80%] rounded-2xl px-5 py-4 bg-indigo-600 text-white whitespace-pre-wrap shadow-sm">
+                          {msg.content}
+                        </div>
+                      ) : (
+                        <div className="max-w-[95%] w-full rounded-2xl px-6 py-5 bg-slate-50 text-slate-800 border border-slate-200 shadow-sm prose prose-slate prose-indigo max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-headings:font-bold prose-a:text-indigo-600 hover:prose-a:text-indigo-500">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+              {/* Export PDF button */}
+              <div className="p-4 border-t border-slate-200 bg-slate-50/50 flex justify-end">
+                <button onClick={handleExportPDF} className="bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-4 rounded-md">
+                  Export Chat as PDF
+                </button>
+              </div>
+              <div className="p-4 border-t border-slate-200 bg-slate-50/50">
+                <div className="flex space-x-3">
+                  <input
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleChat()}
+                    placeholder="e.g. Which components depend on VectorStore?"
+                    className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-slate-900 shadow-sm"
+                  />
+                  <button
+                    onClick={handleChat}
+                    disabled={loading || !query.trim()}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 px-4 rounded-xl transition-all shadow-sm disabled:opacity-50 flex items-center space-x-2"
+                  >
+                    <span className="font-medium">{loading ? "Thinking..." : "Send"}</span>
+                    {!loading && (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                      </svg>
+                    )}
+                  </button>
                 </div>
               </div>
-            ) : (
-              messages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                  {msg.role === "user" ? (
-                    <div className="max-w-[80%] rounded-2xl px-5 py-4 bg-indigo-600 text-white whitespace-pre-wrap shadow-sm">
-                      {msg.content}
-                    </div>
-                  ) : (
-                    <div className="max-w-[95%] w-full rounded-2xl px-6 py-5 bg-slate-50 text-slate-800 border border-slate-200 shadow-sm prose prose-slate prose-indigo max-w-none prose-p:leading-relaxed prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 prose-headings:font-bold prose-a:text-indigo-600 hover:prose-a:text-indigo-500">
-                      <ReactMarkdown 
-                        remarkPlugins={[remarkGfm]}
-                      >
-                        {msg.content}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
-
-          <div className="p-4 border-t border-slate-200 bg-slate-50/50">
-            <div className="flex space-x-3">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleChat()}
-                placeholder="e.g. Which components depend on VectorStore?"
-                className="flex-1 bg-white border border-slate-300 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 text-slate-900 shadow-sm"
-              />
-              <button
-                onClick={handleChat}
-                disabled={loading || !query.trim()}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 px-4 rounded-xl transition-all shadow-sm disabled:opacity-50 flex items-center space-x-2"
-              >
-                <span className="font-medium">{loading ? "Thinking..." : "Send"}</span>
-                {!loading && (
-                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                  </svg>
-                )}
-              </button>
-            </div>
-          </div>
-          </>
-          ) : (
+            </>
+          ) : activeTab === "map" ? (
             <div className="flex-1 overflow-hidden relative">
               <ForceGraphComponent repoId={resolvedParams.id} />
+            </div>
+          ) : (
+            // Team tab UI
+            <div className="flex-1 p-6 overflow-y-auto space-y-6">
+              <h2 className="text-xl font-semibold mb-4">Team Members</h2>
+              {members.length === 0 ? (
+                <p>No members yet. Invite collaborators below.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {members.map((m, idx) => (
+                    <li key={idx} className="flex justify-between items-center bg-slate-50 p-3 rounded-md">
+                      <span>{m.email} ({m.role})</span>
+                      {m.role !== "owner" && (
+                        <span className="text-xs text-gray-500">Member</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <form onSubmit={handleInvite} className="mt-6 space-y-3">
+                <h3 className="text-lg font-medium">Invite New Member</h3>
+                <input
+                  type="email"
+                  placeholder="Email address"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2"
+                  required
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  className="w-full border border-slate-300 rounded-md px-3 py-2"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                </select>
+                <button
+                  type="submit"
+                  disabled={inviting}
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-md"
+                >
+                  {inviting ? "Inviting..." : "Send Invite"}
+                </button>
+                {inviteMessage && <p className="mt-2 text-sm text-gray-600">{inviteMessage}</p>}
+              </form>
             </div>
           )}
         </div>

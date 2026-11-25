@@ -3,12 +3,13 @@
 import { useEffect, useState, useRef } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { useAuth } from "@clerk/nextjs";
+import { API_BASE_URL } from "@/lib/api";
 
 export default function ForceGraphComponent({ repoId }: { repoId: string }) {
   const { getToken } = useAuth();
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
-  const fgRef = useRef<any>();
+  const fgRef = useRef<any>(null);
 
   useEffect(() => {
     if (fgRef.current) {
@@ -30,7 +31,7 @@ export default function ForceGraphComponent({ repoId }: { repoId: string }) {
     const fetchGraph = async () => {
       try {
         const token = await getToken();
-        const res = await fetch(`http://127.0.0.1:8000/api/v1/repos/${repoId}/graph`, {
+        const res = await fetch(`${API_BASE_URL}/api/v1/repos/${repoId}/graph`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (res.ok) {

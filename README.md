@@ -94,3 +94,31 @@ npm run dev
 ```
 
 Visit `http://localhost:3001` in your browser.
+
+## Deployment
+
+### Backend on Render
+1. Create a new Web Service on [Render](https://render.com) and link your GitHub repository (`CodingWizard34/dev-navigator`).
+2. Set **Root Directory** to `backend`.
+3. Set **Build Command** to `pip install -r requirements.txt`.
+4. Set **Start Command** to `uvicorn main:app --host 0.0.0.0 --port $PORT`.
+5. Add the required environment variables:
+   - `PYTHON_VERSION`: `3.12.0`
+   - `GOOGLE_API_KEY`: Your Gemini API key.
+   - `STRIPE_SECRET_KEY`: Your Stripe secret key.
+   - `CLERK_SECRET_KEY`: Your Clerk secret key.
+
+### Frontend on Vercel
+1. Import your repository into [Vercel](https://vercel.com).
+2. Set **Root Directory** to `frontend`.
+3. Framework Preset will auto-detect **Next.js**.
+4. Configure environment variables in Vercel:
+   - `NEXT_PUBLIC_API_URL`: Your Render backend URL (e.g., `https://dev-navigator-api.onrender.com`).
+   - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`: Your Clerk publishable key.
+   - `CLERK_SECRET_KEY`: Your Clerk secret key.
+   - `NEXT_PUBLIC_CLERK_SIGN_IN_URL`: `/`
+   - `NEXT_PUBLIC_CLERK_SIGN_UP_URL`: `/`
+   - `NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL`: `/dashboard`
+   - `NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL`: `/dashboard`
+5. Deploy.
+
