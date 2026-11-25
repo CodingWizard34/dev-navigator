@@ -37,7 +37,7 @@ Do not use conversational filler, just output the structured report directly.
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content_stream(
-                model='gemini-flash-latest',
+                model='gemini-3.5-flash-lite',
                 contents=prompt
             )
             for chunk in response:

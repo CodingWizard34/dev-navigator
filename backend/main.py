@@ -9,6 +9,9 @@ from models import init_db, get_db, Repository, User, Message, RepoMember
 from auth import get_current_user
 import os
 import stripe
+from dotenv import load_dotenv
+
+load_dotenv()
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "sk_test_mock")
 
