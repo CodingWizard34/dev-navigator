@@ -20,7 +20,8 @@ app = FastAPI(title="AI Engineering Platform API")
 # Add CORS middleware to allow the Next.js frontend to connect
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, restrict this to the frontend URL
+    allow_origins=["*"],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
